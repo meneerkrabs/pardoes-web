@@ -375,7 +375,8 @@ export class Sprites implements SpriteHooks {
     this.recomputeSize(s);
     if (d.move) {
       const name = this.resolveMoveName(s, d);
-      if (!this.switchMove(s, name)) return false;
+      // FUN_004452c3: an empty resolved name (`Move=$EMPTY`, e.g. the later legs of a Pardoes walk series) keeps the current move
+      if (name !== '' && !this.switchMove(s, name)) return false;
     }
     this.recomputeSize(s);
     if (s.f1 & F1_ALIGN) {

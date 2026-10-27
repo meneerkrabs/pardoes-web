@@ -95,20 +95,22 @@ export class Bitmaps {
   private create(d: BitmapDef, fileOverride?: string, nameOverride?: string): Bm | null {
     const g = this.g;
     const file = fileOverride ?? (d.file.startsWith('$') ? g.vm.vars.expand(d.file) : d.file);
-    const img = g.loadImg(file);
-    if (!img) return null;
+    // PUZZLE=WORD: the base file (VM1_L) does not exist, it is only the prefix of the letter pictures VM1_L<A..Z>.BMP (FUN_0040d252)
+    const wordBase = d.puzzle === PUZZLE_WORD && d.fx === FX_PUZZLE && fileOverride === undefined;
+    const img = wordBase ? null : g.loadImg(file);
+    if (!img && !wordBase) return null;
     let xywh: number[];
     if (d.rectText.startsWith('$')) xywh = Gfx.nums(g.vm.vars.get(d.rectText) ?? '');
     else xywh = Gfx.nums(d.rectText);
     const key = parseRgb(d.keyText);
     let maskIndex = d.maskIndex;
-    if (maskIndex === -2) maskIndex = img.indexOf(key);
+    if (maskIndex === -2 && img) maskIndex = img.indexOf(key);
     const b: Bm = {
-      name: nameOverride ?? d.name, type: d.type, file, img, rect: rect(xywh[0], xywh[1], xywh[0] + img.w, xywh[1] + img.h),
+      name: nameOverride ?? d.name, type: d.type, file, img, rect: rect(xywh[0], xywh[1], xywh[0] + (img?.w ?? 0), xywh[1] + (img?.h ?? 0)),
       home: [xywh[0], xywh[1], xywh[2], xywh[3]], level: d.level, extra: d.extra, dxf: d.dxf, maskIndex, key,
       colfx: d.colfx, colorize: atoi(d.colorize), fx: d.fx, puzzle: d.puzzle, size: d.size, ref: d.ref, node: null, live: true,
     };
-    if ((d.type !== 'POPUP' && !(d.dxf & DX_NOTINWORLD)) || d.dxf & DX_ALWAYSINWORLD) img.darken(g.scene.world, maskIndex);
+    if (img && ((d.type !== 'POPUP' && !(d.dxf & DX_NOTINWORLD)) || d.dxf & DX_ALWAYSINWORLD)) img.darken(g.scene.world, maskIndex);
     g.bitmaps.set(b.name, b);
     return b;
   }
@@ -217,7 +219,7 @@ export class Bitmaps {
       };
       const l = this.create(def, `${b.file}${word[i]}.BMP`);
       if (!l) continue;
-      l.maskIndex = b.maskIndex >= 0 ? l.img!.indexOf(b.key) : -1;
+      l.maskIndex = b.maskIndex !== -1 ? l.img!.indexOf(b.key) : -1;
       l.key = b.key;
       const x = b.home[0] + Math.trunc((i * b.home[2]) / n), y = b.home[1];
       l.rect = rect(x, y, x + l.img!.w, y + l.img!.h);
