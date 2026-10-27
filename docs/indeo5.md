@@ -79,8 +79,8 @@ planes byte for byte with `ffmpeg -f rawvideo -pix_fmt yuv410p -fps_mode passthr
 (streamed over a pipe).
 
 ```
-node test.mjs                       # the default set below
-node test.mjs FILE.AVI [maxFrames]  # any IV50 AVI
+node tools/indeo5-test.mjs                       # the default set below
+node tools/indeo5-test.mjs FILE.AVI [maxFrames]  # any IV50 AVI
 ```
 
 Type check: `npx -p typescript tsc -p .`
