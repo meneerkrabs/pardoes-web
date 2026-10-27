@@ -8,6 +8,7 @@ import type { Display } from '../engine/vcl.ts';
 import type { GameFiles } from '../files.ts';
 import { Gfx } from './gfx.ts';
 import type { Commands } from './commands.ts';
+import { printDiploma } from './print.ts';
 import { NODE_EDITBOX, NODE_TEKST, rect, W, H, type Node, type Rect } from './scene.ts';
 
 interface MovieObj { name: string; pb: MoviePlayback; waiter: number; rect: Rect }
@@ -33,6 +34,17 @@ export class Media {
     g.vm.on('MOVIE', (st, t) => this.movie(st, t));
     g.vm.on('TEKST', (st) => this.tekst(st));
     g.vm.on('EDITBOX', (st) => this.editbox(st));
+    // Instruction Tekst Value=Update looks the Tekst up by Target (FUN_00420476); the diploma passes the player's name as
+    // Target, so in the original the name never shows on screen. We fall back to Name= so it does (the evident intent).
+    g.vm.instr.set('TEKST', (st) => {
+      if (st.get('VALUE') !== 'UPDATE') return;
+      const vars = g.vm.vars;
+      const t = this.texts.get(vars.sub(st.get('TARGET'))) ?? this.texts.get(vars.sub(st.get('NAME')));
+      if (!t) return;
+      t.contents = vars.sub(st.get('CONTENTS'));
+      g.scene.invalidate(t.node.rect);
+    });
+    g.vm.instr.set('PRINT', () => printDiploma(g, g.vm.vars.get('$SPELERNAAM') ?? ''));
     cmds.waitActive = () => [...this.movies.values()].some((m) => m.waiter >= 0);
     cmds.skip = () => { for (const m of [...this.movies.values()]) if (m.waiter >= 0) this.kill(m.name); };
   }
@@ -128,10 +140,12 @@ export class Media {
     const align = st.get('ALIGN') || 'LEFTTOP';
     const contents = st.get('CONTENTS');
     const vars = this.g.vm.vars;
+    const rec = { node: null as unknown as Node, contents };
     const node: Node = {
       type: NODE_TEKST, name, level: st.has('LEVEL') ? atoi(st.get('LEVEL')) : 0, dx: false, rect: rect(x1, y1, x2, y2), owner: null,
       drawBG: (dst) => {
-        const text = contents.startsWith('$') ? vars.get(contents) ?? '' : contents;
+        const c = rec.contents;
+        const text = c.startsWith('$') ? vars.get(c) ?? '' : c;
         if (!text) return;
         const hi = Surface.hiResText;
         Surface.hiResText = false; // rasterise into the pixels (the text layer of the Display is not used here)
@@ -142,7 +156,8 @@ export class Media {
         Surface.hiResText = hi;
       },
     };
-    this.texts.set(name, { node, contents });
+    rec.node = node;
+    this.texts.set(name, rec);
     this.g.scene.add(node);
     this.g.scene.invalidate(node.rect);
   }

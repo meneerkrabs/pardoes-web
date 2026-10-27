@@ -259,6 +259,7 @@ export class Display {
 
   private layout() {
     const r = this.root.getBoundingClientRect();
+    if (!r.width || !r.height) return; // hidden (e.g. while printing): keep the last layout
     const scale = Math.min(r.width / this.width, r.height / this.height);
     const w = Math.floor(this.width * scale), h = Math.floor(this.height * scale);
     Object.assign(this.canvas.style, { width: `${w}px`, height: `${h}px` });
