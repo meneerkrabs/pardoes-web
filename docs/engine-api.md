@@ -20,8 +20,8 @@ The game is `PLAYER.SCR` run by a port of PARDOES.EXE's script interpreter. Beha
 | `src/gfx/sprites.ts` | `Sprites`: the `Sprite` statement, `Instruction Type=SPRITE`, sprite clocks (`tick(clock)`), animation / motion / AtEnd chaining, frame sounds, overlay + spawned children, drawing, hit test / press / cursor, the held item (`Type=MOUSE`), `walkTo`; implements `SpriteHooks` |
 | `src/gfx/sprites/` | `spr.ts` (.SPR templates, cached per file), `stmt.ts` (`Sprite` statement parse, flag constants), `sprite.ts` (`Sprite` runtime object, `MoveRt`), `draw.ts` (scaled / keyed / sheared / dissolve blit), `group.ts` (`Name=GROUP`: stone puzzles, maze, DIRECTIONAL walking) |
 | `src/gfx/media.ts` | `Movie`, `Style`, `Tekst`, `EditBox` |
+| `src/gfx/dxscreen.ts` | `DxScreen`: the `DXSCREEN` "Tuffer" game (scene OLDTIMER2): statement, `Instruction Type=DX`, fixed 60 Hz world step, own render via `scene.presentHook` + `scene.dirtyOff` (docs/re/graphics.md D2) |
 | `src/game/index.ts` | wiring, main loop, timers, input |
-| `src/game/stubs.ts` | no-op handlers for statements whose module is not written yet (DXSCREEN, `Instruction DX/PRINT/TEKST`) |
 
 ## Conventions
 
@@ -33,7 +33,7 @@ The game is `PLAYER.SCR` run by a port of PARDOES.EXE's script interpreter. Beha
   `scene.invalidate(rect)` for the old and the new rect.
 - Coordinates are 640x480 game pixels. Colours are `0x00BBGGRR`.
 - Debug handle in dev / with `?debug=1`: `globalThis.__pd = { vm, g, cmds, media, bitmaps, snd, prog }`.
-- Dev start: `?play=1&mute=1` (intro), `?play=1&mute=1&section=ITEM/SECTION` runs `[INIT]` and then `[ITEM] #SECTION`.
+- Dev start: `?play=1&mute=1` (intro); `&skipintro=1` (straight to the Sterrenkamer), `&vars=$A=1,$B=x` (preset), `&screen=NAME` (screen change via `[SYSTEM] #DONEXTSCREEN`), `&section=ITEM/SECTION` (run a section); see `src/game/index.ts`.
 
 ## Sprites (`g.sprites`, class `Sprites` in `src/gfx/sprites.ts`)
 

@@ -4,6 +4,7 @@ import { Display } from './engine/vcl.ts';
 import { aiSupported } from './engine/ai.ts';
 import { addIso, ARCHIVE_PAGE, availableSource, cdFolder, GAME_TITLE, removeIso } from './library.ts';
 import type { GameFiles } from './files.ts';
+import { clearSave, loadSave, type SaveGame } from './game/save.ts';
 
 const app = document.getElementById('app')!;
 
@@ -29,14 +30,22 @@ async function startScreen() {
   const status = el('div', { className: 'note' });
   const progress = (label: string) => (f: number) => (status.textContent = `${label} ${Math.round(f * 100)}%`);
 
-  const playButton = el('button', {
-    textContent: 'Spelen',
-    title: lib.source === 'iso' ? 'Van je eigen ISO' : lib.source === 'dev' ? 'Uit public/data (dev)' : 'Van archive.org',
-    onclick: async () => {
-      await audio.unlock();
-      try { status.textContent = 'Spel laden…'; play(await lib.open((d, t) => (status.textContent = `Spel laden… ${Math.round((100 * d) / t)}%`))); } catch (e) { showError(e); }
-    },
-  });
+  const save = loadSave();
+  const start = async (resume: SaveGame | null) => {
+    await audio.unlock();
+    if (!resume) clearSave();
+    try {
+      status.textContent = 'Spel laden…';
+      play(await lib.open((d, t) => (status.textContent = `Spel laden… ${Math.round((100 * d) / t)}%`)), resume);
+    } catch (e) { showError(e); }
+  };
+  const source = lib.source === 'iso' ? 'Van je eigen ISO' : lib.source === 'dev' ? 'Uit public/data (dev)' : 'Van archive.org';
+  const buttons = save
+    ? [
+      el('button', { textContent: 'Verder spelen', title: `${save.name ? save.name + ', ' : ''}opgeslagen ${new Date(save.time).toLocaleString('nl-NL')}`, onclick: () => start(save) }),
+      el('button', { textContent: 'Nieuw spel', title: source, onclick: () => start(null) }),
+    ]
+    : [el('button', { textContent: 'Spelen', title: source, onclick: () => start(null) })];
 
   const isoInput = el('input', { type: 'file', accept: '.iso,.ISO', hidden: true });
   isoInput.onchange = async () => {
@@ -63,10 +72,10 @@ async function startScreen() {
 
   const screen = el('div', { className: 'bdb-start' },
     el('h1', { textContent: GAME_TITLE }),
-    el('div', { className: 'books' }, playButton),
+    el('div', { className: 'books' }, ...buttons),
     el('label', { className: 'note' }, 'Beeld: ', look),
     status,
-    el('div', { className: 'note', innerHTML: `De spelbestanden worden geladen uit de ISO op <a href="${ARCHIVE_PAGE}" target="_blank" rel="noopener" style="color:#e8c872">archive.org</a> (de eerste keer ongeveer 220 MB, daarna staan ze in je browser). Spelen met de muis.` }),
+    el('div', { className: 'note', innerHTML: `De spelbestanden worden geladen uit de ISO op <a href="${ARCHIVE_PAGE}" target="_blank" rel="noopener" style="color:#e8c872">archive.org</a> (de eerste keer ongeveer 220 MB, daarna staan ze in je browser). Spelen met de muis. Je voortgang wordt in de browser bewaard.` }),
     el('details', { className: 'note' },
       el('summary', { textContent: 'Eigen cd of ISO gebruiken' }),
       el('div', { className: 'books' },
@@ -87,7 +96,7 @@ async function startScreen() {
   app.appendChild(screen);
 }
 
-async function play(files: GameFiles) {
+async function play(files: GameFiles, resume: SaveGame | null = null) {
   app.replaceChildren();
   const host = el('div');
   app.appendChild(host);
@@ -96,7 +105,7 @@ async function play(files: GameFiles) {
   await startGame(display, files, () => {
     display.root.remove();
     startScreen();
-  });
+  }, resume);
 }
 
 async function boot() {
