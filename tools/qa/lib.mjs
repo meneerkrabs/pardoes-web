@@ -158,6 +158,54 @@ export const mk = (ctx) => {
     await wait(80);
     return true;
   };
+  // piranha ride bot (PIRANHA2..2E): steer away from the fish (or toward it when chase) with real arrow keys; ends on PIRANHA3 or PIRANHA1 (sunk)
+  const rideBot = async ({ chase = false, maxMs = 240000, shotPrefix = '' } = {}) => {
+    let dir = 0, lastBite = '0', seg = '', shots = 0;
+    const t0 = clock();
+    while (clock() - t0 < maxMs) {
+      const st = await evaluate(() => {
+        const p = globalThis.__pd, g = p.g; const f = g.sprites.find('P2PIRANHA'), b = g.sprites.find('PVAARBOOT');
+        return { scr: p.vm.vars.get('$CURRENTSCREEN'), bites: p.vm.vars.get('$PI2_BITECNT'), f: f && f.visible ? { x: f.x } : null, b: b ? { x: b.x } : null };
+      });
+      if (st.scr !== seg) { seg = st.scr; note(`  ride screen ${seg} bites=${st.bites}`); if (shotPrefix && shots++ < 6) await shot(`${shotPrefix}-${seg}`); }
+      if (st.scr === 'PIRANHA3' || st.scr === 'PIRANHA1') break;
+      if (st.bites !== lastBite) { note(`  bite count ${st.bites}`); lastBite = st.bites; }
+      if (st.f && st.b) {
+        const fc = st.f.x + 28, bc = st.b.x + 93;
+        const want = (fc < bc ? 1 : -1) * (chase ? -1 : 1);
+        if (want !== dir) { dir = want; await key(dir > 0 ? 'ArrowRight' : 'ArrowLeft'); }
+      }
+      await wait(60);
+    }
+    return { screen: await V('$CURRENTSCREEN'), bites: await V('$PI2_BITECNT') };
+  };
+  // ---- navigation between known screens (real clicks on the exits), BFS over the map; STERRENKAMER -> hub goes through the chronoscope
+  const EDGES = {
+    KPRUIG: { PYTHON1: 'CMDKPRUIGtoPY1', OLDTIMER1: 'CMDKPRUIGtoOT1', VOCSCHIP1: ['CMDKPRUIGtoVC1', [620, 260]], KPMARE: 'CMDKPRUIGtoKPMARE', KPANDER: 'CMDKPRUIGtoKPANDER', KPREIS: 'CMDKPRUIGtoKPREIS', STERRENKAMER: 'CMDKPRUIGtoSK' },
+    KPANDER: { SPOOKSLOT1: 'CMDKPANDERtoSS1', FATAMORGANA1: 'CMDKPANDERtoFM1', PIRANHA1: 'CMDKPANDERtoPI1', KPRUIG: 'CMDKPANDERtoKPRUIG', KPMARE: 'CMDKPANDERtoKPMARE', KPREIS: 'CMDKPANDERtoKPREIS', STERRENKAMER: 'CMDKPANDERtoSK' },
+    KPREIS: { CARNAVAL1: 'CMDKPREIStoCF1', CANIBAL1: 'CMDKPREIStoMC1', DOOLHOF1: 'CMDKPREIStoDH1', KPRUIG: 'CMDKPREIStoKPRUIG', KPANDER: 'CMDKPREIStoKPANDER', KPMARE: 'CMDKPREIStoKPMARE', STERRENKAMER: 'CMDKPREIStoSK' },
+    KPMARE: { TROLLENKONING1: 'CMDKPMAREtoTK1', ELFJES1: 'CMDKPMAREtoLF1', VILLAVOLTA1: 'CMDKPMAREtoVV1', KPRUIG: 'CMDKPMAREtoKPRUIG', KPANDER: 'CMDKPMAREtoKPANDER', KPREIS: 'CMDKPMAREtoKPREIS', STERRENKAMER: 'CMDKPMAREtoSK' },
+    VOCSCHIP1: { KPRUIG: 'CMDVC1toKPRUIG' }, SPOOKSLOT1: { KPANDER: 'CMDSS1toKPANDER' }, FATAMORGANA1: { KPANDER: 'CMDFM1toKPANDER' },
+    VEERMAN1: { FATAMORGANA2: 'CMDVM1toFM2' }, FATAMORGANA2: { FATAMORGANA1: 'CMDFM2toFM1' }, DOOLHOF1: { KPREIS: 'CMDDH1toKPREIS' },
+    OLDTIMER1: { KPRUIG: 'CMDOT1toKPRUIG' }, TROLLENKONING1: { KPMARE: 'CMDTK1toKPMARE' }, ELFJES1: { KPMARE: 'CMDLF1toKPMARE' }, VILLAVOLTA1: { KPMARE: 'CMDVV1toKPMARE' },
+    PIRANHA1: { KPANDER: 'CMDPI1toKPANDER' }, CARNAVAL1: { KPREIS: 'CMDCF1toKPREIS' }, CANIBAL1: { KPREIS: 'CMDMC1toKPREIS' }, PYTHON1: { KPRUIG: 'CMDPY1toKPRUIG' },
+  };
+  const navTo = async (target) => {
+    for (let hop = 0; hop < 12; hop++) {
+      const here = await V('$CURRENTSCREEN');
+      if (here === target) return true;
+      if (here.startsWith('DEPUT')) { await go(here === 'DEPUT1' ? 'CMDDP1toWORLD' : 'CMDDP2toWORLD'); await settle({ max: 60000 }); continue; }
+      if (here === 'STERRENKAMER') { const hub = ['KPRUIG', 'KPANDER', 'KPREIS', 'KPMARE'].find((h) => h === target) ?? 'KPRUIG'; if (!(await toRealm(hub))) return false; continue; }
+      // BFS from here to target
+      const prev = { [here]: null }; const qu = [here];
+      while (qu.length) { const c = qu.shift(); if (c === target) break; for (const n of Object.keys(EDGES[c] ?? {})) if (!(n in prev)) { prev[n] = c; qu.push(n); } }
+      if (!(target in prev)) { note(`!! navTo ${target}: no route from ${here}`); return false; }
+      let step = target; while (prev[step] !== here) step = prev[step];
+      const e = EDGES[here][step]; const [cmd, hint] = Array.isArray(e) ? e : [e, undefined];
+      if (!(await go(cmd, { hint, expect: step, max: 60000 }))) return false;
+    }
+    return (await V('$CURRENTSCREEN')) === target;
+  };
   const drop = async () => { await click(8, 8); await wait(300); };
 
   // ---- setup of a segment (documented writes)
@@ -196,5 +244,5 @@ export const mk = (ctx) => {
     await settle({ max: 20000 });
     return go('CMDSKtoKPRANDOM', { expect: realm });
   };
-  return { ...ctx, bitmapPoint, dragBitmap, saveTo, bootSave, toRealm, note, clock, S, V, Vs, st, settle, waitFor, waitScreen, cmdPoint, spritePoint, hitName, hasCmd, hasSprite, spriteInfo, clickCmd, clickSprite, clickT, go, openBag, take, takeHelper, takeTwinkel, use, useHelper, drop, preset, check, done, snap, skipMovie, checks };
+  return { ...ctx, navTo, rideBot, bitmapPoint, dragBitmap, saveTo, bootSave, toRealm, note, clock, S, V, Vs, st, settle, waitFor, waitScreen, cmdPoint, spritePoint, hitName, hasCmd, hasSprite, spriteInfo, clickCmd, clickSprite, clickT, go, openBag, take, takeHelper, takeTwinkel, use, useHelper, drop, preset, check, done, snap, skipMovie, checks };
 };
