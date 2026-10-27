@@ -115,7 +115,7 @@ export class Sound {
     if (!p) {
       const b = this.dat.get(k, 'WAV');
       if (!b) console.warn('geluid ontbreekt:', file);
-      p = b ? audio.decode(b.slice().buffer).catch((e) => { console.warn('geluid', k, e); return null; }) : Promise.resolve(null);
+      p = b ? audio.decode(b.slice().buffer).catch((e) => { if (b.length > 64) console.warn('geluid', k, e); return null; }) : Promise.resolve(null); // LEEG.WAV has no samples
       this.decoded.set(k, p);
     }
     return p;

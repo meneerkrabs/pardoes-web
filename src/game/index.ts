@@ -9,6 +9,7 @@ import { Sound, installSound } from '../script/sound.ts';
 import { Gfx } from '../gfx/gfx.ts';
 import { Bitmaps } from '../gfx/bitmaps.ts';
 import { Commands } from '../gfx/commands.ts';
+import { Sprites } from '../gfx/sprites.ts';
 import { Media } from '../gfx/media.ts';
 import { installStubs } from './stubs.ts';
 
@@ -20,6 +21,7 @@ export async function startGame(display: Display, files: GameFiles, onQuit: () =
   const g = new Gfx(vm, files.dat, snd);
   const bitmaps = new Bitmaps(g);
   const cmds = new Commands(g, bitmaps);
+  g.sprites = new Sprites(g, cmds);
   const media = new Media(g, files, display, cmds);
   installStubs(g);
   vm.onClock = (name) => g.sprites?.tick(name);

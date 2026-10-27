@@ -140,6 +140,15 @@ export class Vm {
     this.queue.push(tid);
   }
 
+  /** Terminate a thread without notifying anyone (FUN_00404557: a CHANGE takes over a sprite another thread is waiting on). */
+  killThread(tid: number) {
+    const t = this.threads[tid];
+    if (!t || !t.active) return;
+    t.active = false;
+    t.waiting = false;
+    t.frames.length = 0;
+  }
+
   private finish(t: Thread) {
     t.active = false;
     if (t.notify >= 0) this.resume(t.notify);
