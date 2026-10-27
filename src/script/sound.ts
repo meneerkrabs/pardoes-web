@@ -113,10 +113,9 @@ export class Sound {
     const k = file.toUpperCase();
     let p = this.decoded.get(k);
     if (!p) {
-      p = this.dat.has(k, 'WAV')
-        ? this.dat.read(k, 'WAV').then((b) => audio.decode(b)).catch((e) => { console.warn('geluid', k, e); return null; })
-        : Promise.resolve(null);
-      if (!this.dat.has(k, 'WAV')) console.warn('geluid ontbreekt:', file);
+      const b = this.dat.get(k, 'WAV');
+      if (!b) console.warn('geluid ontbreekt:', file);
+      p = b ? audio.decode(b.slice().buffer).catch((e) => { console.warn('geluid', k, e); return null; }) : Promise.resolve(null);
       this.decoded.set(k, p);
     }
     return p;

@@ -13,9 +13,10 @@ export interface GameFiles {
   dat: DatArchive;
   /** A file from PARDOES/MEDIA (`INTROA.AVI`, `PARDOES.WAV`), or null when missing. */
   media(name: string): Promise<MediaFile | null>;
-  /** While PARDOES.DAT is still being downloaded: bytes received / total; null when complete. */
-  datProgress(): { done: number; total: number } | null;
 }
+
+/** Progress while the archive is read/downloaded (bytes). */
+export type Progress = (done: number, total: number) => void;
 
 /** MEDIA names known on the CD (sizes from the ISO; also used for progress). */
 export const MEDIA_FILES: Record<string, number> = {

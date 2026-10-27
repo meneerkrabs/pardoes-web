@@ -34,7 +34,7 @@ async function startScreen() {
     title: lib.source === 'iso' ? 'Van je eigen ISO' : lib.source === 'dev' ? 'Uit public/data (dev)' : 'Van archive.org',
     onclick: async () => {
       await audio.unlock();
-      try { status.textContent = 'Spel laden…'; play(await lib.open()); } catch (e) { showError(e); }
+      try { status.textContent = 'Spel laden…'; play(await lib.open((d, t) => (status.textContent = `Spel laden… ${Math.round((100 * d) / t)}%`))); } catch (e) { showError(e); }
     },
   });
 
@@ -49,7 +49,7 @@ async function startScreen() {
   dirInput.webkitdirectory = true;
   dirInput.onchange = async () => {
     try {
-      const files = await cdFolder([...(dirInput.files ?? [])].map((f) => [f.webkitRelativePath, f] as [string, Blob]));
+      const files = await cdFolder([...(dirInput.files ?? [])].map((f) => [f.webkitRelativePath, f] as [string, Blob]), (d, t) => (status.textContent = `Spel laden… ${Math.round((100 * d) / t)}%`));
       await audio.unlock();
       play(files);
     } catch (e) { showError(e); }

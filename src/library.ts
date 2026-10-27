@@ -6,7 +6,7 @@
 
 import { IsoVfs } from './engine/vfs.ts';
 import { DatArchive } from './engine/dat.ts';
-import { blobMedia, DAT_SIZE, looksLikePardoes, MEDIA_FILES, type GameFiles, type MediaFile } from './files.ts';
+import { blobMedia, DAT_SIZE, looksLikePardoes, MEDIA_FILES, type GameFiles, type MediaFile, type Progress } from './files.ts';
 
 export const GAME_TITLE = 'Een Wonderlijk Avontuur met Pardoes de Tovernar';
 export const ARCHIVE_ITEM = 'een-wonderlijk-avontuur-met-pardoes-de-tovernar';
@@ -15,7 +15,7 @@ export const ARCHIVE_PAGE = `https://archive.org/details/${ARCHIVE_ITEM}`;
 const ROOT = 'PARDOES';
 
 export type Source = 'iso' | 'dev' | 'archive';
-export interface Library { source: Source; open: () => Promise<GameFiles> }
+export interface Library { source: Source; open: (onProgress?: Progress) => Promise<GameFiles> }
 
 const opfs = async () => navigator.storage.getDirectory();
 const opfsDir = async (name: string) => (await opfs()).getDirectoryHandle(name, { create: true });
@@ -26,7 +26,7 @@ const archiveUrl = (path: string) =>
 export async function availableSource(): Promise<Library> {
   try {
     const h = await (await opfsDir('isos')).getFileHandle('pardoes.iso').catch(() => null);
-    if (h) return { source: 'iso', open: async () => isoFiles(await IsoVfs.open(await h.getFile(), ROOT)) };
+    if (h) return { source: 'iso', open: async (p) => isoFiles(await IsoVfs.open(await h.getFile(), ROOT), p) };
   } catch (e) {
     console.warn('OPFS niet beschikbaar', e);
   }
@@ -34,24 +34,23 @@ export async function availableSource(): Promise<Library> {
     const base = `${import.meta.env.BASE_URL}data/pardoes/`;
     const probe = await fetch(base + 'PARDOES.DAT', { method: 'HEAD' }).catch(() => null);
     if (probe?.ok && probe.headers.get('content-length') === String(DAT_SIZE)) {
-      return { source: 'dev', open: async () => remoteFiles((p) => base + p, false) };
+      return { source: 'dev', open: async (p) => remoteFiles((f) => base + f, false, p) };
     }
   }
-  return { source: 'archive', open: async () => remoteFiles(archiveUrl, true) };
+  return { source: 'archive', open: async (p) => remoteFiles(archiveUrl, true, p) };
 }
 
-function isoFiles(iso: IsoVfs): Promise<GameFiles> {
-  return DatArchive.fromBlob(iso.file('PARDOES.DAT')).then((dat) => ({
+function isoFiles(iso: IsoVfs, onProgress?: Progress): Promise<GameFiles> {
+  return DatArchive.fromBlob(iso.file('PARDOES.DAT'), onProgress).then((dat) => ({
     dat,
     media: async (name: string) => {
       try { return blobMedia(iso.file(`MEDIA/${name.toUpperCase()}`)); } catch { return null; }
     },
-    datProgress: () => null,
   }));
 }
 
 /** A CD folder picked with <input webkitdirectory>: used in this session only. */
-export async function cdFolder(files: Iterable<[string, Blob]>): Promise<GameFiles> {
+export async function cdFolder(files: Iterable<[string, Blob]>, onProgress?: Progress): Promise<GameFiles> {
   const map = new Map<string, Blob>();
   for (const [p, b] of files) {
     const parts = p.replace(/\\/g, '/').toUpperCase().split('/');
@@ -59,11 +58,10 @@ export async function cdFolder(files: Iterable<[string, Blob]>): Promise<GameFil
     if (i >= 0) map.set(parts.slice(i + 1).join('/'), b);
   }
   if (!looksLikePardoes(map.keys())) throw new Error('Geen Pardoes-cd gevonden in deze map (verwacht een map "PARDOES" met PARDOES.DAT).');
-  const dat = await DatArchive.fromBlob(map.get('PARDOES.DAT')!);
+  const dat = await DatArchive.fromBlob(map.get('PARDOES.DAT')!, onProgress);
   return {
     dat,
     media: async (name) => { const b = map.get(`MEDIA/${name.toUpperCase()}`); return b ? blobMedia(b) : null; },
-    datProgress: () => null,
   };
 }
 
@@ -99,23 +97,21 @@ async function storedDat(): Promise<File | null> {
   }
 }
 
-async function storeDat(chunks: Uint8Array[]): Promise<File | null> {
+async function storeDat(bytes: Uint8Array): Promise<void> {
   try {
     const dir = await opfsDir('archive');
     await dir.removeEntry('pardoes.dat.ok').catch(() => {});
     const h = await dir.getFileHandle('pardoes.dat', { create: true });
     const w = await h.createWritable();
-    for (const c of chunks) await w.write(c as Uint8Array<ArrayBuffer>);
+    await w.write(bytes as Uint8Array<ArrayBuffer>);
     await w.close();
     await dir.getFileHandle('pardoes.dat.ok', { create: true });
-    return await h.getFile();
   } catch (e) {
     console.warn('PARDOES.DAT kon niet in de browser bewaard worden; volgende keer wordt hij opnieuw geladen', e);
-    return null;
   }
 }
 
-async function remoteFiles(url: (path: string) => string, keep: boolean): Promise<GameFiles> {
+async function remoteFiles(url: (path: string) => string, keep: boolean, onProgress?: Progress): Promise<GameFiles> {
   const media = async (name: string): Promise<MediaFile | null> => {
     const n = name.toUpperCase();
     if (!(n in MEDIA_FILES)) return null;
@@ -141,35 +137,32 @@ async function remoteFiles(url: (path: string) => string, keep: boolean): Promis
   };
 
   const stored = keep ? await storedDat() : null;
-  if (stored) return { dat: await DatArchive.fromBlob(stored), media, datProgress: () => null };
+  if (stored) return { dat: await DatArchive.fromBlob(stored, onProgress), media };
 
-  const s = DatArchive.streaming();
-  let received = 0, complete = false;
-  void (async () => {
-    for (let attempt = 0; ; attempt++) {
-      try {
-        const res = await fetch(url('PARDOES.DAT'));
-        if (!res.ok || !res.body) throw new Error(`PARDOES.DAT: HTTP ${res.status}`);
-        const reader = res.body.getReader();
-        for (;;) {
-          const { done, value } = await reader.read();
-          if (done) break;
-          s.push(value);
-          received += value.length;
-        }
-        if (received !== DAT_SIZE) throw new Error(`PARDOES.DAT: onvolledig (${received} van ${DAT_SIZE} bytes)`);
-        s.done();
-        complete = true;
-        const dat = await s.ready;
-        if (keep) { const f = await storeDat(s.bytes()); if (f) dat.rebase(f); }
-        return;
-      } catch (e) {
-        // no byte ranges: a broken download can only start over, and only before anything was handed out
-        if (received === 0 && attempt < 2) { await new Promise((r) => setTimeout(r, 1000 * (attempt + 1))); continue; }
-        s.fail(e);
-        return;
+  // no byte ranges on archive.org: a broken download can only start over
+  let lastErr: unknown;
+  for (let attempt = 0; attempt < 3; attempt++) {
+    try {
+      const res = await fetch(url('PARDOES.DAT'));
+      if (!res.ok || !res.body) throw new Error(`PARDOES.DAT: HTTP ${res.status}`);
+      const buf = new Uint8Array(DAT_SIZE);
+      const reader = res.body.getReader();
+      let o = 0;
+      for (;;) {
+        const { done, value } = await reader.read();
+        if (done) break;
+        if (o + value.length > DAT_SIZE) throw new Error('PARDOES.DAT: groter dan verwacht');
+        buf.set(value, o);
+        o += value.length;
+        onProgress?.(o, DAT_SIZE);
       }
+      if (o !== DAT_SIZE) throw new Error(`PARDOES.DAT: onvolledig (${o} van ${DAT_SIZE} bytes)`);
+      if (keep) void storeDat(buf);
+      return { dat: new DatArchive(buf), media };
+    } catch (e) {
+      lastErr = e;
+      await new Promise((r) => setTimeout(r, 1000 * (attempt + 1)));
     }
-  })();
-  return { dat: await s.ready, media, datProgress: () => (complete ? null : { done: received, total: DAT_SIZE }) };
+  }
+  throw lastErr;
 }

@@ -3,113 +3,46 @@
 // [end of entry i-1 (dataStart for the first), its end). The last table slot (count includes it) is an unused
 // terminator that overlaps the start of the data.
 //
-// Sources: a Blob (the user's ISO, or the copy kept in OPFS) read lazily with slice(), or a download that is
-// still streaming in: then a read waits until the bytes of that entry have arrived.
+// The engine reads files synchronously in the middle of a script chain (like the original), so the whole archive is
+// held in memory as one buffer (216 MB) and entries are views into it.
 
 export interface DatEntry { name: string; start: number; end: number }
 
 export class DatArchive {
   readonly entries = new Map<string, DatEntry>(); // UPPER name -> entry
-  private readSpan: (start: number, end: number) => Promise<ArrayBuffer>;
-  private constructor(readSpan: (start: number, end: number) => Promise<ArrayBuffer>) {
-    this.readSpan = readSpan;
-  }
+  readonly bytes: Uint8Array;
 
-  /** Parse the table of contents from the first bytes of the file (at least `dataStart` bytes). */
-  private static parseToc(head: Uint8Array): DatEntry[] {
-    const v = new DataView(head.buffer, head.byteOffset, head.byteLength);
+  constructor(bytes: Uint8Array) {
+    this.bytes = bytes;
+    const v = new DataView(bytes.buffer, bytes.byteOffset, bytes.byteLength);
     const count = v.getUint32(0, true);
-    let start = v.getUint32(4, true);
-    const out: DatEntry[] = [];
+    const dataStart = v.getUint32(4, true);
+    let start = dataStart;
     for (let i = 0; i < count; i++) {
       const o = 8 + i * 17;
-      if (o + 17 > head.length) break; // the terminator slot runs into the data
+      if (o + 17 > dataStart) break; // the terminator slot runs into the data
       let name = '';
-      for (let k = 0; k < 13 && head[o + k]; k++) name += String.fromCharCode(head[o + k]);
+      for (let k = 0; k < 13 && bytes[o + k]; k++) name += String.fromCharCode(bytes[o + k]);
       const end = v.getUint32(o + 13, true);
       if (!name) break;
-      out.push({ name: name.toUpperCase(), start, end });
+      this.entries.set(name.toUpperCase(), { name: name.toUpperCase(), start, end });
       start = end;
     }
-    return out;
   }
 
-  private add(list: DatEntry[]) {
-    for (const e of list) this.entries.set(e.name, e);
-  }
-
-  static async fromBlob(blob: Blob): Promise<DatArchive> {
-    const head = new Uint8Array(await blob.slice(0, 8).arrayBuffer());
-    const dataStart = new DataView(head.buffer).getUint32(4, true);
-    const toc = new Uint8Array(await blob.slice(0, dataStart).arrayBuffer());
-    const dat = new DatArchive((s, e) => blob.slice(s, e).arrayBuffer());
-    dat.add(DatArchive.parseToc(toc));
-    return dat;
-  }
-
-  /**
-   * A DAT that is being downloaded: `chunks` grows as bytes arrive. Resolves once the table of contents is in.
-   * Call the returned `push` for each received chunk and `done`/`fail` at the end.
-   */
-  static streaming(): { ready: Promise<DatArchive>; push(chunk: Uint8Array): void; done(): void; fail(e: unknown): void; bytes(): Uint8Array[] } {
-    const chunks: Uint8Array[] = [];
-    const offsets: number[] = []; // start offset of each chunk
-    let received = 0;
-    let finished = false;
-    let error: unknown = null;
-    const waiters: { end: number; resolve: () => void; reject: (e: unknown) => void }[] = [];
-    let readyResolve!: (d: DatArchive) => void, readyReject!: (e: unknown) => void;
-    const ready = new Promise<DatArchive>((res, rej) => { readyResolve = res; readyReject = rej; });
-    let dat: DatArchive | null = null;
-
-    const copy = (s: number, e: number): ArrayBuffer => {
-      const out = new Uint8Array(e - s);
-      // binary search the first chunk holding s
-      let lo = 0, hi = offsets.length - 1;
-      while (lo < hi) { const m = (lo + hi + 1) >> 1; if (offsets[m] <= s) lo = m; else hi = m - 1; }
-      for (let i = lo, o = 0; i < chunks.length && o < out.length; i++) {
-        const c = chunks[i], cs = offsets[i];
-        const a = Math.max(s, cs) - cs, b = Math.min(e, cs + c.length) - cs;
-        if (b > a) { out.set(c.subarray(a, b), o); o += b - a; }
-      }
-      return out.buffer;
-    };
-    const span = (s: number, e: number) => {
-      if (e <= received) return Promise.resolve(copy(s, e));
-      if (error) return Promise.reject(error);
-      if (finished) return Promise.reject(new Error('PARDOES.DAT: bestand korter dan verwacht'));
-      return new Promise<void>((resolve, reject) => waiters.push({ end: e, resolve, reject })).then(() => copy(s, e));
-    };
-    const tryToc = () => {
-      if (dat || received < 8) return;
-      const head = new Uint8Array(copy(0, 8));
-      const dataStart = new DataView(head.buffer).getUint32(4, true);
-      if (received < dataStart) return;
-      dat = new DatArchive(span);
-      dat.add(DatArchive.parseToc(new Uint8Array(copy(0, dataStart))));
-      readyResolve(dat);
-    };
-    return {
-      ready,
-      push(chunk) {
-        offsets.push(received);
-        chunks.push(chunk);
-        received += chunk.length;
-        tryToc();
-        for (let i = waiters.length - 1; i >= 0; i--) if (waiters[i].end <= received) waiters.splice(i, 1)[0].resolve();
-      },
-      done() {
-        finished = true;
-        for (const w of waiters.splice(0)) w.reject(new Error('PARDOES.DAT: bestand korter dan verwacht'));
-        if (!dat) readyReject(new Error('PARDOES.DAT: geen inhoudsopgave'));
-      },
-      fail(e) {
-        error = e;
-        for (const w of waiters.splice(0)) w.reject(e);
-        if (!dat) readyReject(e);
-      },
-      bytes: () => chunks,
-    };
+  /** Read a Blob (ISO extent, OPFS copy, CD file) completely into memory. */
+  static async fromBlob(blob: Blob, onProgress?: (done: number, total: number) => void): Promise<DatArchive> {
+    const out = new Uint8Array(blob.size);
+    const reader = (blob.stream() as ReadableStream<Uint8Array>).getReader();
+    let o = 0;
+    for (;;) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      out.set(value, o);
+      o += value.length;
+      onProgress?.(o, blob.size);
+    }
+    return new DatArchive(out);
   }
 
   /** Entry for a name as written in the script (case-insensitive; `ext` is tried when the name has none). */
@@ -122,14 +55,22 @@ export class DatArchive {
     return this.find(name, ext) !== null;
   }
 
-  async read(name: string, ext?: string): Promise<ArrayBuffer> {
+  /** The file's bytes (a view into the archive; do not modify). */
+  get(name: string, ext?: string): Uint8Array | null {
     const e = this.find(name, ext);
-    if (!e) throw new Error(`niet gevonden in PARDOES.DAT: ${name}`);
-    return this.readSpan(e.start, e.end);
+    return e ? this.bytes.subarray(e.start, e.end) : null;
   }
 
-  /** Swap the byte source (after a download was stored in OPFS) without touching the table. */
-  rebase(blob: Blob) {
-    this.readSpan = (s, e) => blob.slice(s, e).arrayBuffer();
+  /** A copy as ArrayBuffer (for decoders that take ownership, e.g. decodeAudioData). */
+  read(name: string, ext?: string): ArrayBuffer {
+    const b = this.get(name, ext);
+    if (!b) throw new Error(`niet gevonden in PARDOES.DAT: ${name}`);
+    return b.slice().buffer;
+  }
+
+  text(name: string): string {
+    const b = this.get(name);
+    if (!b) throw new Error(`niet gevonden in PARDOES.DAT: ${name}`);
+    return new TextDecoder('windows-1252').decode(b);
   }
 }
