@@ -2,7 +2,8 @@
 // rebuilds itself in #CREATE from variables (inventory $INVENT1..4, rings, $..._FINISHED flags, the random puzzle
 // variants), so a save is the variable table plus the current screen. It is written to localStorage a few seconds after
 // each screen change and when the page is hidden. Resuming runs the normal game setup ([INIT] #CONTINUE, without the
-// intro), puts the variables back and changes to the saved screen like the game does ($NEXTSCREEN + [SYSTEM] #DONEXTSCREEN).
+// intro), puts the variables back before the start room is built and changes to the saved screen like the game does
+// ($NEXTSCREEN + [SYSTEM] #DONEXTSCREEN).
 
 import type { Vm } from '../script/vm.ts';
 
@@ -49,11 +50,29 @@ export function autosave(vm: Vm): () => void {
   return () => { clearInterval(t); document.removeEventListener('visibilitychange', onHide); removeEventListener('pagehide', save); };
 }
 
-/** After the game setup: restore the variables and go to the saved screen. */
-export function restore(vm: Vm, s: SaveGame) {
+/**
+ * Resume, part 1: put the variables back right after the new-game reset ([INIT] #CREATEGAME) and before the start room is
+ * built, so the Sterrenkamer comes up from the saved state. Its entrance is chosen from $PREVIOUSSCREEN: LEEG would play the
+ * fax intro (a stranded thread when the screen is changed meanwhile) and PREVIOUSSCREEN=STERRENKAMER has no entrance at all
+ * (cabinet and trapdoor stay uninitialised), so come in as if from a realm ($CURRENTSCREEN is what the entrance sees as the previous screen).
+ */
+export function restoreVars(vm: Vm, s: SaveGame) {
   for (const [k, v] of Object.entries(s.vars)) if (!SKIP_VARS.has(k)) vm.vars.setLiteral(k, v);
-  // always a real screen change (also back into the same screen): #CREATE rebuilds it from the restored variables
-  vm.vars.setLiteral('$NEXTSCREEN', s.screen);
-  vm.runNew('SYSTEM', 'DONEXTSCREEN', '');
-  vm.pump();
+  vm.vars.setLiteral('$EXITBYBEL', '0');
+  vm.vars.setLiteral('$CURRENTSCREEN', 'KPANDER'); // [PROGRAM] #CONTINUE starts with TIMERS #DISABLE: $PREVIOUSSCREEN=$CURRENTSCREEN
+}
+
+/** Resume, part 2: once the start room has finished building, change to the saved screen like the game does. */
+export function restoreScreen(vm: Vm, s: SaveGame) {
+  if (s.screen === 'STERRENKAMER') return;
+  const t0 = Date.now();
+  const poll = setInterval(() => {
+    const started = vm.vars.get('$CURRENTSCREEN') === 'STERRENKAMER' && !vm.threadInfo().some((t) => t.triple.startsWith('PROGRAM/CONTINUE'));
+    if (started) {
+      clearInterval(poll);
+      vm.vars.setLiteral('$NEXTSCREEN', s.screen);
+      vm.runNew('SYSTEM', 'DONEXTSCREEN', '');
+      vm.pump();
+    } else if (Date.now() - t0 > 30000) clearInterval(poll);
+  }, 250);
 }

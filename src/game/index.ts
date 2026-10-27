@@ -11,7 +11,7 @@ import { Bitmaps } from '../gfx/bitmaps.ts';
 import { Commands } from '../gfx/commands.ts';
 import { Sprites } from '../gfx/sprites.ts';
 import { Media } from '../gfx/media.ts';
-import { autosave, restore, type SaveGame } from './save.ts';
+import { autosave, restoreScreen, restoreVars, type SaveGame } from './save.ts';
 import { DxScreen } from '../gfx/dxscreen.ts';
 
 export async function startGame(display: Display, files: GameFiles, onQuit: () => void, resume: SaveGame | null = null): Promise<void> {
@@ -75,24 +75,23 @@ export async function startGame(display: Display, files: GameFiles, onQuit: () =
   const skip = !!resume || q.has('skipintro') || q.has('screen') || q.has('section');
   if (skip) {
     const run = vm.instr.get('RUN')!;
-    vm.instr.set('RUN', (st, t, m) => (st.get('NAME') === 'INTRO' ? 'cont' : run(st, t, m)));
+    // no intro; on resume the saved variables go in between the new-game reset and the creation of the start room
+    vm.instr.set('RUN', (st, t, m) => {
+      const name = st.get('NAME');
+      if (name === 'INTRO') return 'cont';
+      if (resume && name === 'PROGRAM' && st.get('TARGET') === 'CONTINUE') restoreVars(vm, resume);
+      return run(st, t, m);
+    });
     vm.runNew('INIT', '', '');
     vm.pump();
-    vm.instr.set('RUN', run);
     for (const kv of (q.get('vars') ?? '').split(',').filter(Boolean)) {
       const k = kv.slice(0, kv.indexOf('=')).toUpperCase(), v = kv.slice(kv.indexOf('=') + 1);
       if (!vm.vars.setLiteral(k, v)) console.warn('onbekende variabele', k);
     }
     vm.runNew('INIT', 'CONTINUE', '');
     vm.pump();
-    if (resume) {
-      // wait until the start room is up (Pardoes has walked in), then restore and change screens
-      const t0 = Date.now();
-      const poll = setInterval(() => {
-        if (vm.vars.get('$CURRENTSCREEN') === 'STERRENKAMER' && Date.now() - t0 > 1500) { clearInterval(poll); restore(vm, resume); }
-        else if (Date.now() - t0 > 15000) clearInterval(poll);
-      }, 250);
-    }
+    vm.instr.set('RUN', run);
+    if (resume) restoreScreen(vm, resume);
     const screen = q.get('screen')?.toUpperCase();
     if (screen) {
       // after the start room is up: change screens the game's way
