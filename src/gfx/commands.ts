@@ -15,6 +15,7 @@ const KEYS: Record<string, string> = {
   UP: 'ArrowUp', DOWN: 'ArrowDown', LEFT: 'ArrowLeft', RIGHT: 'ArrowRight', ADD: '+', DIVIDE: '/', MULTIPLY: '*', SUBTRACT: '-',
 };
 for (let i = 1; i <= 12; i++) KEYS[`F${i}`] = `F${i}`;
+/** The only nodes that can still be hit while `Instruction OBJECT Value=DISABLE` is active (string table at 0x0046f5a8 of the original). */
 const HIT_LOCK = new Set(['PARDOES', 'RATTAR', 'CMDSCREEN', 'INVTFLES']);
 
 /** A Command statement (its runtime state is persistent, C.2.2). */
@@ -176,7 +177,7 @@ export class Commands {
       for (let i = list.length - 1; i >= 0; i--) {
         const n = list[i];
         if (n.type === NODE_SCREEN) break;
-        if (g.objectDisabled && HIT_LOCK.has(n.name)) continue;
+        if (g.objectDisabled && !HIT_LOCK.has(n.name)) continue; // FUN_0041201f: with the scene objects disabled (Rattar) only these four are hit-tested
         const r = n.rect;
         if (x < r.l || x > r.r || y < r.t || y >= r.b) continue;
         switch (n.type) {
